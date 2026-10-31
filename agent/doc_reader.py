@@ -1,0 +1,139 @@
+"""
+doc_reader.py — agent-side plain-text extraction for the AI Proxy RAG/file-reader surface.
+
+Ingests an uploaded document straight from its in-memory bytes (no temp files —
+app.py hands this the raw upload stream) and extracts to PLAIN TEXT so it can be
+spliced into the user turn and ride the existing AI-Proxy-inspected path. Base64
+passthrough is NOT implemented here — that's a separate future test.
+
+Supported: .txt .md (plain read) | .pdf (PyMuPDF) | .docx (python-docx)
+| .csv (stdlib csv module)
+
+This is a TEST HARNESS component. It deliberately does no sanitising of the
+extracted text — a hidden instruction is exactly the payload we want to survive
+extraction and reach the model context, so the AI Proxy's input scanner gets a
+chance to catch it.
+"""
+
+import csv
+import io
+import os
+
+# ~chars, not tokens. Sized for a ~32k-*token* context window (e.g. the
+# example local model, qwen2.5:14b); ~4 chars/token English, leave generous
+# room for history + question + completion. The Local and Public flows can
+# have very different context windows (the example public model's is much
+# larger), so a doc truncated for the local model may have fit whole in the
+# public one. Keep that in mind when a planted payload lands past the cut line.
+DEFAULT_MAX_CHARS = 24000
+
+SUPPORTED_EXTS = (".txt", ".md", ".pdf", ".docx", ".csv")
+
+
+class ExtractionError(Exception):
+    pass
+
+
+def _read_plaintext(data):
+    return data.decode("utf-8", errors="replace")
+
+
+def _read_pdf(data):
+    try:
+        import pymupdf as fitz  # PyMuPDF >= 1.24 exposes `pymupdf`
+    except ImportError:
+        try:
+            import fitz  # older PyMuPDF import name
+        except ImportError:
+            raise ExtractionError(
+                "PDF support needs PyMuPDF. Install: pip install pymupdf"
+            )
+    parts = []
+    with fitz.open(stream=data, filetype="pdf") as doc:
+        for page in doc:
+            parts.append(page.get_text("text"))
+    return "\n".join(parts)
+
+
+def _read_docx(data):
+    try:
+        from docx import Document
+    except ImportError:
+        raise ExtractionError(
+            "DOCX support needs python-docx. Install: pip install python-docx"
+        )
+    doc = Document(io.BytesIO(data))
+    parts = [p.text for p in doc.paragraphs]
+    # tables carry text too — a payload could hide in a table cell
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text:
+                    parts.append(cell.text)
+    return "\n".join(parts)
+
+
+def _read_csv(data):
+    """
+    Plain stdlib csv — no new dependency. Renders each row as its cells
+    joined with " | ", one row per line, preserving cell content verbatim
+    (a planted canary/injection value in any cell survives unmodified).
+    Added for the OWASP test-harness pii_leak.csv fixture — see
+    test_harness/fixtures/.
+    """
+    text_data = data.decode("utf-8", errors="replace")
+    reader = csv.reader(io.StringIO(text_data))
+    return "\n".join(" | ".join(row) for row in reader)
+
+
+def extract_text(filename, data, max_chars=DEFAULT_MAX_CHARS):
+    """
+    filename : original upload filename (only its extension is used)
+    data     : raw file bytes
+
+    Returns (text, meta). meta = {ext, orig_chars, truncated, returned_chars}.
+    Raises ExtractionError on unsupported type or read failure.
+    """
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext in (".txt", ".md"):
+        text = _read_plaintext(data)
+    elif ext == ".pdf":
+        text = _read_pdf(data)
+    elif ext == ".docx":
+        text = _read_docx(data)
+    elif ext == ".csv":
+        text = _read_csv(data)
+    else:
+        raise ExtractionError(
+            f"Unsupported type '{ext}'. Supported: {', '.join(SUPPORTED_EXTS)}"
+        )
+
+    orig = len(text)
+    truncated = orig > max_chars
+    if truncated:
+        text = text[:max_chars] + f"\n[...truncated {orig - max_chars} chars...]"
+
+    meta = {
+        "ext": ext,
+        "orig_chars": orig,
+        "truncated": truncated,
+        "returned_chars": len(text),
+    }
+    return text, meta
+
+
+def build_rag_turn(question, doc_text, filename):
+    """
+    Splice extracted text into the user turn as explicit RAG context.
+
+    The context/question seam is deliberate: it lets you test whether the model
+    honours an instruction planted in the "context" block vs. the "question" block.
+    The whole string becomes the user message content -> rides the existing
+    4-mode routing -> gets scanned by the AI Proxy's input scanner on the
+    AI-Proxy paths.
+    """
+    return (
+        f'Context from uploaded document "{filename}":\n'
+        f'"""\n{doc_text}\n"""\n\n'
+        f'User question: {question}'
+    )

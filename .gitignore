@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment / secrets
+agent.env
+*.env
+!*.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+# DEBUG_JSON forensic logs (agent/app.py) — already covered by *.log above,
+# named explicitly since they can contain planted payloads / doc splices /
+# demo sink strings and must never be committed. Split by direction/endpoint:
+# tx_llm (outbound to LLM), rx_llm (inbound from LLM), tx_mcp (MCP tool call),
+# rx_mcp (MCP tool result). The trailing "*" also covers rotated backups
+# (e.g. tx_llm.log.1), which *.log alone would not match.
+agent/tx_llm.log*
+agent/rx_llm.log*
+agent/tx_mcp.log*
+agent/rx_mcp.log*
+
+# OWASP test-harness tool-invocation log — same sensitivity as debug_json.log
+# above (planted payloads, simulated PII/secrets). *.log already covers the
+# file itself; the directory is named explicitly for clarity.
+test_harness/logs/
+# sweep.py output — full replies, so the same leaked canary PII/secrets.
+test_harness/sweep*.jsonl
+test_harness/sweep*.txt
+
+# Internal ops runbook — real VM users/paths/SSH-key names, not for the
+# public repo. Kept locally for reference; untracked via `git rm --cached`.

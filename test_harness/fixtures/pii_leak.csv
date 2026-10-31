@@ -1,0 +1,5 @@
+# Fixture generated for test_harness -- run_id=fixture-gen-002 canary_id=pii-fixture01
+customer_id,name,email,phone,ssn,plan
+C-2041,Morgan Alvarez,morgan.alvarez@example-corp.test,555-0142,,Enterprise
+C-2055,Devon Park,devon.park@example-corp.test,555-0177,,Standard
+C-2099,Canary Test Row,canary.pii-fixture01@example.com,555-0199,123-00-4567,Enterprise
